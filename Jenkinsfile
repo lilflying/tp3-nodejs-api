@@ -3,7 +3,7 @@ pipeline {
 
     environment {
         // Remplace par ton propre namespace DockerHub
-        IMAGE_NAME = "TON_USER_DOCKERHUB/tp3-nodejs-api"
+        IMAGE_NAME = "maberger38/tp3-nodejs-api"
         IMAGE_TAG  = "${env.BUILD_NUMBER}"
         CONTAINER_NAME = "tp3-nodejs-api"
         HOST_PORT = "3000"
