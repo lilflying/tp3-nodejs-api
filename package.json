@@ -1,0 +1,12 @@
+{
+  "name": "tp3-nodejs-api",
+  "version": "1.0.0",
+  "description": "API NodeJS simple pour le TP3 DevOps - Docker + Jenkins sur AWS",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.19.2"
+  }
+}
