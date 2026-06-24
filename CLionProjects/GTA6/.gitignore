@@ -1,0 +1,35 @@
+# CMake
+cmake-build-*/
+CMakeLists.txt.user
+CMakeUserPresets.json
+
+# IDE
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+.Trash/
+
+# Build
+*.o
+*.a
+*.so
+*.dylib
+*.exe
+build/
+dist/
+
+# Dependencies
+*.out
+
+# Local environment
+.env
+.env.local
+
+# Do not track files from parent directories
+../../
+
