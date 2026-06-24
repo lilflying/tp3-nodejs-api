@@ -1,0 +1,94 @@
+---
+# ── Playbook DevOps TP — Ansible & Terraform
+# Exécuté via GitLab CI/CD sur le runner local (Ubuntu Controller)
+
+# ── 1. Gather facts sur le controller lui-même ────────────────────────────────
+- name: "1. Local Analysis — Gather facts on Ansible Controller"
+  hosts: localhost
+  connection: local
+  gather_facts: true
+  tasks:
+    - name: Afficher les facts du controller
+      debug:
+        msg:
+          - "Hostname     : {{ ansible_hostname }}"
+          - "OS           : {{ ansible_distribution }} {{ ansible_distribution_version }}"
+          - "Kernel       : {{ ansible_kernel }}"
+          - "Architecture : {{ ansible_architecture }}"
+          - "IP           : {{ ansible_default_ipv4.address | default('N/A') }}"
+          - "CPUs         : {{ ansible_processor_vcpus }}"
+          - "RAM          : {{ ansible_memtotal_mb }} MB"
+
+# ── 2. Timezone Linux — Europe/Paris ─────────────────────────────────────────
+- name: "2. Linux — Set timezone to Europe/Paris"
+  hosts: linux
+  become: true
+  gather_facts: true
+  tasks:
+    - name: Configurer Europe/Paris
+      community.general.timezone:
+        name: Europe/Paris
+
+    - name: Vérifier la timezone
+      command: timedatectl show --property=Timezone --value
+      register: tz_result
+      changed_when: false
+
+    - name: Afficher la timezone active
+      debug:
+        msg: "✅ Timezone sur {{ inventory_hostname }} : {{ tz_result.stdout }}"
+
+# ── 3. Timezone Linux — Africa/Abidjan ───────────────────────────────────────
+- name: "3. Linux — Switch timezone to Africa/Abidjan (GMT)"
+  hosts: linux
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Configurer Africa/Abidjan
+      community.general.timezone:
+        name: Africa/Abidjan
+
+    - name: Vérifier la timezone
+      command: timedatectl show --property=Timezone --value
+      register: tz_result
+      changed_when: false
+
+    - name: Afficher la timezone active
+      debug:
+        msg: "✅ Timezone sur {{ inventory_hostname }} : {{ tz_result.stdout }}"
+
+# ── 4. Timezone Windows — Europe/Paris ───────────────────────────────────────
+- name: "4. Windows — Set timezone to Europe/Paris"
+  hosts: windows
+  gather_facts: true
+  tasks:
+    - name: Configurer Romance Standard Time (Europe/Paris)
+      ansible.windows.win_timezone:
+        timezone: Romance Standard Time
+
+    - name: Vérifier la timezone Windows
+      ansible.windows.win_shell: (Get-TimeZone).Id
+      register: win_tz
+      changed_when: false
+
+    - name: Afficher la timezone
+      debug:
+        msg: "✅ Timezone Windows sur {{ inventory_hostname }} : {{ win_tz.stdout | trim }}"
+
+# ── 5. Timezone Windows — Africa/Abidjan (GMT) ───────────────────────────────
+- name: "5. Windows — Switch timezone to Africa/Abidjan (GMT)"
+  hosts: windows
+  gather_facts: false
+  tasks:
+    - name: Configurer Greenwich Standard Time (Africa/Abidjan)
+      ansible.windows.win_timezone:
+        timezone: Greenwich Standard Time
+
+    - name: Vérifier la timezone Windows
+      ansible.windows.win_shell: (Get-TimeZone).Id
+      register: win_tz
+      changed_when: false
+
+    - name: Afficher la timezone
+      debug:
+        msg: "✅ Timezone Windows sur {{ inventory_hostname }} : {{ win_tz.stdout | trim }}"

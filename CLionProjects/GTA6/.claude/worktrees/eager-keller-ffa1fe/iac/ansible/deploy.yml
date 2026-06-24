@@ -1,0 +1,61 @@
+---
+- name: Déploiement de l'application DevOps TP
+  hosts: app
+  become: true
+
+  tasks:
+    - name: Installer les paquets prérequis
+      apt:
+        name:
+          - ca-certificates
+          - curl
+          - git
+        state: present
+        update_cache: true
+
+    - name: Ajouter la clé GPG officielle de Docker
+      apt_key:
+        url: https://download.docker.com/linux/ubuntu/gpg
+        state: present
+
+    - name: Ajouter le dépôt Docker
+      apt_repository:
+        repo: "deb https://download.docker.com/linux/ubuntu {{ ansible_distribution_release }} stable"
+        state: present
+
+    - name: Installer Docker Engine et Compose plugin
+      apt:
+        name:
+          - docker-ce
+          - docker-ce-cli
+          - containerd.io
+          - docker-compose-plugin
+        state: present
+        update_cache: true
+
+    - name: S'assurer que Docker est démarré
+      service:
+        name: docker
+        state: started
+        enabled: true
+
+    - name: Copier le projet vers la VM
+      copy:
+        src: "{{ playbook_dir }}/../../"
+        dest: /opt/devops-tp/
+        mode: '0755'
+
+    - name: Lancer la stack avec docker compose
+      command: docker compose up -d --build
+      args:
+        chdir: /opt/devops-tp
+
+    - name: Afficher l'état des conteneurs
+      command: docker compose ps
+      args:
+        chdir: /opt/devops-tp
+      register: ps_output
+
+    - name: Résultat
+      debug:
+        var: ps_output.stdout_lines
