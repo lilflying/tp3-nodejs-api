@@ -59,6 +59,45 @@ clang++ -std=c++17 -O2 gta6_3d.cpp -o gta6_3d \
 g++ -std=c++17 -O2 gta6_3d.cpp -o gta6_3d -lraylib -lGL -lm -lpthread -ldl -lrt -lX11
 ```
 
+### 🪟 Ton ami est sur Windows
+
+Le code est **cross-platform** (sockets Winsock gérés automatiquement). Deux options :
+
+**Option A — exe natif via MSYS2/MinGW (recommandé)**
+1. Installer [MSYS2](https://www.msys2.org), ouvrir le terminal **« MSYS2 MINGW64 »**.
+2. Installer les dépendances :
+   ```bash
+   pacman -S mingw-w64-x86_64-gcc mingw-w64-x86_64-raylib
+   ```
+3. Compiler (depuis le dossier contenant `gta6_3d.cpp`) :
+   ```bash
+   g++ -std=c++17 -O2 gta6_3d.cpp -o gta6_3d.exe \
+       -lraylib -lopengl32 -lgdi32 -lwinmm -lws2_32
+   ```
+4. Lancer / rejoindre :
+   ```bash
+   ./gta6_3d.exe --connect <IP-de-l-hote> --port 7777
+   ```
+   (double-clic sur `gta6_3d.exe` = solo)
+
+**Option B — WSL2 + WSLg (Windows 11, sans MSYS2)**
+1. Dans Windows : `wsl --install` (installe Ubuntu + WSLg pour l'affichage GUI).
+2. Dans le terminal Ubuntu (WSL) :
+   ```bash
+   sudo apt update && sudo apt install -y build-essential git cmake \
+     libgl1-mesa-dev libx11-dev libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev
+   git clone --depth 1 -b 5.5 https://github.com/raysan5/raylib && \
+     cmake -S raylib -B raylib/build -DBUILD_EXAMPLES=OFF && \
+     sudo cmake --build raylib/build -j --target install && sudo ldconfig
+   g++ -std=c++17 -O2 gta6_3d.cpp -o gta6_3d -lraylib -lGL -lm -lpthread -ldl -lrt -lX11
+   ./gta6_3d --connect <IP-de-l-hote> --port 7777
+   ```
+   La fenêtre du jeu s'affiche via WSLg.
+
+> ⚠️ Sur Windows, pense à **autoriser `gta6_3d.exe` dans le pare-feu** s'il héberge,
+> et — si vous passez par ngrok/Tailscale — c'est ton ami qui se **connecte**, donc
+> aucune config pare-feu côté Windows n'est nécessaire pour rejoindre.
+
 ## Détails techniques
 
 - Transport : **TCP** length-prefixé (compatible ngrok-free **et** Tailscale).

@@ -36,20 +36,33 @@
 #include <cstdio>
 #include <cstdlib>
 #include <algorithm>
-// ── reseau (co-op TCP) ──
+// ── reseau (co-op TCP, cross-platform) ──
 #include <cstring>
 #include <cstdint>
-#include <sys/socket.h>
-#include <netinet/in.h>
-#include <netinet/tcp.h>
-#include <arpa/inet.h>
-#include <netdb.h>
-#include <unistd.h>
-#include <fcntl.h>
 #include <csignal>
 #include <cerrno>
 #include <chrono>
 #include <thread>
+#ifdef _WIN32
+  #include <winsock2.h>
+  #include <ws2tcpip.h>
+  typedef SOCKET socket_t;
+  #define CLOSESOCK closesocket
+  #define SOCK_INVALID INVALID_SOCKET
+  #define RX_FLAGS 0
+#else
+  #include <sys/socket.h>
+  #include <netinet/in.h>
+  #include <netinet/tcp.h>
+  #include <arpa/inet.h>
+  #include <netdb.h>
+  #include <unistd.h>
+  #include <fcntl.h>
+  typedef int socket_t;
+  #define CLOSESOCK close
+  #define SOCK_INVALID (-1)
+  #define RX_FLAGS MSG_DONTWAIT
+#endif
 
 // ─── CONFIG ──────────────────────────────────────────────────────────────────
 static const int   SCREEN_W = 1280, SCREEN_H = 720;
@@ -114,7 +127,7 @@ static const float EYE_H=0.75f;      // hauteur des yeux au-dessus de la base du
 
 // ── multijoueur ──
 static int gNetMode=0;               // 0 solo, 1 host, 2 client
-static int gListenFd=-1, gConnFd=-1; // sockets
+static socket_t gListenFd=SOCK_INVALID, gConnFd=SOCK_INVALID; // sockets
 static bool gPeerConnected=false;
 // avatar de l'autre joueur (host->client = host player, client->host = client player)
 struct Remote { Vector3 pos; float yaw,pitch; int inCar; float health; int weapon; bool alive, shoot; Vector3 shotA,shotB; float shotTimer; };
@@ -931,10 +944,17 @@ static uint16_t R16(const uint8_t*d,int&o){ uint16_t v; memcpy(&v,d+o,2); o+=2; 
 static std::vector<uint8_t> gRx;
 static uint8_t gNetBuf[65536];
 
-static void sendraw(int fd,const uint8_t*p,int n){ int s=0; while(s<n){ ssize_t r=send(fd,p+s,n-s,0); if(r<=0){ if(errno==EINTR)continue; gPeerConnected=false; return; } s+=(int)r; } }
-static void sendFrame(int fd,const NBuf&b){ uint32_t len=b.n; uint8_t h[4]; memcpy(h,&len,4); sendraw(fd,h,4); sendraw(fd,b.d,b.n); }
-static bool recvLatest(int fd,uint8_t type,uint8_t*out,int&outLen){ uint8_t tmp[16384]; ssize_t r;
-    while((r=recv(fd,tmp,sizeof(tmp),MSG_DONTWAIT))>0) gRx.insert(gRx.end(),tmp,tmp+r);
+static void sendraw(socket_t fd,const uint8_t*p,int n){ int s=0; while(s<n){ int r=(int)send(fd,(const char*)p+s,n-s,0);
+    if(r<=0){
+#ifdef _WIN32
+        if(r<0 && WSAGetLastError()==WSAEWOULDBLOCK) continue;
+#else
+        if(r<0 && (errno==EINTR||errno==EAGAIN||errno==EWOULDBLOCK)) continue;
+#endif
+        gPeerConnected=false; return; } s+=r; } }
+static void sendFrame(socket_t fd,const NBuf&b){ uint32_t len=b.n; uint8_t h[4]; memcpy(h,&len,4); sendraw(fd,h,4); sendraw(fd,b.d,b.n); }
+static bool recvLatest(socket_t fd,uint8_t type,uint8_t*out,int&outLen){ uint8_t tmp[16384]; int r;
+    while((r=(int)recv(fd,(char*)tmp,sizeof(tmp),RX_FLAGS))>0) gRx.insert(gRx.end(),tmp,tmp+r);
     if(r==0) gPeerConnected=false;
     bool got=false;
     while(gRx.size()>=4){ uint32_t len; memcpy(&len,gRx.data(),4); if(len>60000){gRx.clear();break;} if(gRx.size()<4+(size_t)len)break;
@@ -990,30 +1010,47 @@ static void applyInput(const uint8_t*d,int len){ int o=1;
     if(shoot && gRemote.shotTimer<=0){ remoteShoot(a,bb); gRemote.shotTimer=0.07f; } }
 
 // ── sockets ──
-static void setNB(int fd){ int f=fcntl(fd,F_GETFL,0); fcntl(fd,F_SETFL,f|O_NONBLOCK); }
-static bool hostStart(int port){ gListenFd=socket(AF_INET,SOCK_STREAM,0); if(gListenFd<0)return false;
-    int yes=1; setsockopt(gListenFd,SOL_SOCKET,SO_REUSEADDR,&yes,sizeof(yes));
+static void setNB(socket_t fd){
+#ifdef _WIN32
+    u_long m=1; ioctlsocket(fd,FIONBIO,&m);
+#else
+    int f=fcntl(fd,F_GETFL,0); fcntl(fd,F_SETFL,f|O_NONBLOCK);
+#endif
+}
+static bool hostStart(int port){ gListenFd=socket(AF_INET,SOCK_STREAM,0); if(gListenFd==SOCK_INVALID)return false;
+    int yes=1; setsockopt(gListenFd,SOL_SOCKET,SO_REUSEADDR,(const char*)&yes,sizeof(yes));
     sockaddr_in a; memset(&a,0,sizeof(a)); a.sin_family=AF_INET; a.sin_addr.s_addr=INADDR_ANY; a.sin_port=htons(port);
     if(bind(gListenFd,(sockaddr*)&a,sizeof(a))<0){ perror("bind"); return false; }
     listen(gListenFd,1); setNB(gListenFd); printf("[NET] host en ecoute sur le port %d\n",port); return true; }
-static void hostAccept(){ if(gPeerConnected)return; int fd=accept(gListenFd,0,0); if(fd<0)return;
-    int yes=1; setsockopt(fd,IPPROTO_TCP,TCP_NODELAY,&yes,sizeof(yes)); gConnFd=fd; gPeerConnected=true; gRx.clear(); printf("[NET] joueur connecte !\n"); }
-static bool clientConnect(const char*host,int port){ gConnFd=socket(AF_INET,SOCK_STREAM,0); if(gConnFd<0)return false;
+static void hostAccept(){ if(gPeerConnected)return; socket_t fd=accept(gListenFd,0,0); if(fd==SOCK_INVALID)return;
+    int yes=1; setsockopt(fd,IPPROTO_TCP,TCP_NODELAY,(const char*)&yes,sizeof(yes));
+#ifdef _WIN32
+    setNB(fd);
+#endif
+    gConnFd=fd; gPeerConnected=true; gRx.clear(); printf("[NET] joueur connecte !\n"); }
+static bool clientConnect(const char*host,int port){ gConnFd=socket(AF_INET,SOCK_STREAM,0); if(gConnFd==SOCK_INVALID)return false;
     sockaddr_in a; memset(&a,0,sizeof(a)); a.sin_family=AF_INET; a.sin_port=htons(port);
     if(inet_pton(AF_INET,host,&a.sin_addr)<=0){ struct hostent* he=gethostbyname(host); if(!he){printf("[NET] host introuvable: %s\n",host);return false;} memcpy(&a.sin_addr,he->h_addr,he->h_length); }
     if(connect(gConnFd,(sockaddr*)&a,sizeof(a))<0){ perror("[NET] connect"); return false; }
-    int yes=1; setsockopt(gConnFd,IPPROTO_TCP,TCP_NODELAY,&yes,sizeof(yes)); gPeerConnected=true; gRx.clear(); printf("[NET] connecte au host %s:%d\n",host,port); return true; }
+    int yes=1; setsockopt(gConnFd,IPPROTO_TCP,TCP_NODELAY,(const char*)&yes,sizeof(yes));
+#ifdef _WIN32
+    setNB(gConnFd);
+#endif
+    gPeerConnected=true; gRx.clear(); printf("[NET] connecte au host %s:%d\n",host,port); return true; }
 static void hostPump(float dt){ hostAccept(); if(!gPeerConnected)return;
     if(gRemote.shotTimer>0)gRemote.shotTimer-=dt;
     int len; if(recvLatest(gConnFd,'I',gNetBuf,len)) applyInput(gNetBuf,len);
     NBuf b; buildSnapshot(b); sendFrame(gConnFd,b);
-    if(!gPeerConnected){ close(gConnFd); gConnFd=-1; printf("[NET] joueur deconnecte\n"); } }
+    if(!gPeerConnected){ CLOSESOCK(gConnFd); gConnFd=SOCK_INVALID; printf("[NET] joueur deconnecte\n"); } }
 static void clientPump(float){ if(!gPeerConnected)return;
     int len; if(recvLatest(gConnFd,'S',gNetBuf,len)) applySnapshot(gNetBuf,len);
     NBuf b; buildInput(b); sendFrame(gConnFd,b); }
 
 // boucle serveur dediee (headless, sans fenetre) — conteneurisable
 static int runServer(int port){ gNetMode=1; gServerHeadless=true;
+#ifdef _WIN32
+    WSADATA wsa; WSAStartup(MAKEWORD(2,2),&wsa);
+#endif
     srand(1234); buildCity();
     if(!hostStart(port)) return 1;
     printf("[NET] serveur dedie demarre. En attente de joueur...\n");
@@ -1027,7 +1064,11 @@ static int runServer(int port){ gNetMode=1; gServerHeadless=true;
 
 // ─── MAIN ────────────────────────────────────────────────────────────────────
 int main(int argc,char**argv){
+#ifdef _WIN32
+    WSADATA wsa; WSAStartup(MAKEWORD(2,2),&wsa);
+#else
     signal(SIGPIPE,SIG_IGN);
+#endif
     int port=7777; const char* connectHost=nullptr;
     for(int i=1;i<argc;i++){
         if(!strcmp(argv[i],"--server")){ gNetMode=1; }
@@ -1088,7 +1129,7 @@ int main(int argc,char**argv){
         EndDrawing();
         if(cd>0&&--cd==0){ TakeScreenshot(shot); break; }
     }
-    if(gConnFd>=0)close(gConnFd); if(gListenFd>=0)close(gListenFd);
+    if(gConnFd!=SOCK_INVALID)CLOSESOCK(gConnFd); if(gListenFd!=SOCK_INVALID)CLOSESOCK(gListenFd);
 
     UnloadShader(gScene); UnloadShader(gDepth); UnloadShader(gBright); UnloadShader(gBlur);
     UnloadRenderTexture(gSceneRT); UnloadRenderTexture(gBrightRT); UnloadRenderTexture(gBlurRT[0]); UnloadRenderTexture(gBlurRT[1]);
