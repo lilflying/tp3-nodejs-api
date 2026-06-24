@@ -31,7 +31,6 @@ dist/
 .env.local
 
 # Claude & Local AI tools
-.claude/
 .claude.json*
 
 # Do not track files from parent directories
